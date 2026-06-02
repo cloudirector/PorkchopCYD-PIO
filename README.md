@@ -24,7 +24,7 @@
 # Elegoo CYD (ESP32-2432S028R)
 pio run -e esp32dev -t upload
 
-# NM-CYD-C5 (ESP32-C5)
+# NM-CYD-C5 (ESP32-C5) WIP WILL NOT BUILD
 pio run -e esp32c5dev -t upload
 ```
 
