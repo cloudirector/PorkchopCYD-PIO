@@ -205,6 +205,8 @@ struct Config {
   uint8_t soundVolume  = 255;  // 0-255 PWM duty, 255=max
   bool ghostMode       = false; // MAC randomization
   uint8_t ghostInterval = 5;   // minutes between MAC rotations (1-60)
+  bool invertColors    = false; // false = INVOFF (correct), true = INVON
+  bool rotate180       = false; // false = rotation 3, true = rotation 1
 } cfg;
 
 PorkchopMode currentMode = PorkchopMode::IDLE;
@@ -2733,10 +2735,15 @@ void update() {
           dst.drawString(ml, 6, y); y+=dy;
         }
 
+        char ic[28]; snprintf(ic, sizeof(ic), "INVERT COLORS: %s", cfg.invertColors ? "ON" : "OFF");
+        dst.drawString(ic, 6, y); y+=dy;
+        char r180[28]; snprintf(r180, sizeof(r180), "ROTATE 180: %s", cfg.rotate180 ? "ON" : "OFF");
+        dst.drawString(r180, 6, y); y+=dy;
+
         dst.drawLine(0, y+2, DISPLAY_W, y+2, colorFG()); y+=6;
         dst.setTextDatum(TC_DATUM);
         dst.drawString("TYPE KEY IN SERIAL MONITOR", DISPLAY_W/2, y); y+=dy;
-        dst.drawString("TOP:theme MID:sound BOT:ghost HOLD:save", DISPLAY_W/2, y);
+        dst.drawString("1:theme 2:sound 3:ghost 4:invert 5:rotate HOLD:save", DISPLAY_W/2, y);
       };
       if (useSprite) drawSet(mainSprite, 0);
       else           drawSet(tft,        TOP_BAR_H);
@@ -3802,6 +3809,11 @@ void showBootSplash() {
 } // namespace Display
 
 // ============================================================
+void applyDisplayConfig() {
+  tft.setRotation(cfg.rotate180 ? 1 : 3);
+  tft.invertDisplay(cfg.invertColors);
+}
+
 // TOUCH INPUT — tap/hold zones for CYD navigation
 // ============================================================
 namespace Touch {
@@ -3824,9 +3836,14 @@ int lastTX = 0, lastTY = 0;
 bool getPoint(int& sx, int& sy) {
   if (!touch.tirqTouched() && !touch.touched()) return false;
   TS_Point p = touch.getPoint();
-  // Map to screen (landscape, rotation=1)
-  sx = map(p.x, T_XMIN, T_XMAX, 0, DISPLAY_W);
-  sy = map(p.y, T_YMIN, T_YMAX, 0, DISPLAY_H);
+  // Axis direction follows display rotation
+  if (cfg.rotate180) {
+    sx = map(p.x, T_XMIN, T_XMAX, 0, DISPLAY_W);
+    sy = map(p.y, T_YMIN, T_YMAX, 0, DISPLAY_H);
+  } else {
+    sx = map(p.x, T_XMAX, T_XMIN, 0, DISPLAY_W);
+    sy = map(p.y, T_YMAX, T_YMIN, 0, DISPLAY_H);
+  }
   sx = constrain(sx, 0, DISPLAY_W-1);
   sy = constrain(sy, 0, DISPLAY_H-1);
   return true;
@@ -7935,11 +7952,12 @@ void handleInput() {
     case PorkchopMode::SETTINGS:
       if(isTap){
         int relY = ty - TOP_BAR_H;
-        if (relY < MAIN_H/3) {
-          // Top third = cycle theme
+        int zone = (relY * 5) / MAIN_H;  // 0-4
+        if (zone == 0) {
+          // Zone 1 — cycle theme
           cfg.themeIndex=(cfg.themeIndex+1)%THEME_COUNT;
-        } else if (relY < MAIN_H*2/3) {
-          // Mid third = toggle sound
+        } else if (zone == 1) {
+          // Zone 2 — toggle sound
           if (cfg.soundEnabled) {
             cfg.soundEnabled = false;
           } else {
@@ -7952,8 +7970,8 @@ void handleInput() {
             strncpy(vmsg,"SOUND OFF",sizeof(vmsg));
           Display::showToast(vmsg, 1500);
           if (cfg.soundEnabled) SFX::play(SFX::CLICK);
-        } else {
-          // Bottom third = toggle ghost mode
+        } else if (zone == 2) {
+          // Zone 3 — toggle ghost mode
           cfg.ghostMode = !cfg.ghostMode;
           GhostMode::apply();
           char gmsg[32];
@@ -7962,6 +7980,16 @@ void handleInput() {
           else
             strncpy(gmsg,"GHOST OFF",sizeof(gmsg));
           Display::showToast(gmsg, 2000);
+        } else if (zone == 3) {
+          // Zone 4 — toggle invert colors
+          cfg.invertColors = !cfg.invertColors;
+          tft.invertDisplay(cfg.invertColors);
+          Display::showToast(cfg.invertColors ? "INVERT: ON" : "INVERT: OFF", 1500);
+        } else {
+          // Zone 5 — toggle rotate 180
+          cfg.rotate180 = !cfg.rotate180;
+          applyDisplayConfig();
+          Display::showToast(cfg.rotate180 ? "ROTATE 180: ON" : "ROTATE 180: OFF", 1500);
         }
       } else if(isHold){
         prefs.begin("pork",false);
@@ -7974,6 +8002,8 @@ void handleInput() {
         prefs.putUChar("vol",cfg.soundVolume);
         prefs.putBool("ghost",cfg.ghostMode);
         prefs.putUChar("ghost_int",cfg.ghostInterval);
+        prefs.putBool("invert",cfg.invertColors);
+        prefs.putBool("rot180",cfg.rotate180);
         prefs.end(); XP::save();
         Display::showToast("SAVED!",1500);
         currentMode=PorkchopMode::IDLE;
@@ -8186,6 +8216,8 @@ void loadConfig() {
   cfg.soundVolume   = prefs.getUChar("vol", 255);
   cfg.ghostMode     = prefs.getBool("ghost", false);
   cfg.ghostInterval = prefs.getUChar("ghost_int", 5);
+  cfg.invertColors  = prefs.getBool("invert", false);
+  cfg.rotate180     = prefs.getBool("rot180", false);
   prefs.end();
   if(cfg.themeIndex>=THEME_COUNT) cfg.themeIndex=0;
   if(cfg.brightness<10)  cfg.brightness=10;
@@ -9807,7 +9839,7 @@ void setup() {
   pinMode(TFT_BL_PIN,OUTPUT); digitalWrite(TFT_BL_PIN,HIGH);
 
   // TFT
-  tft.begin(); tft.setRotation(1); tft.fillScreen(TFT_BLACK);
+  tft.begin(); tft.setRotation(3); tft.invertDisplay(false); tft.fillScreen(TFT_BLACK);
 
   // SD init — use dedicated sdSPI instance on pins 18/19/23
   // Must be initialized BEFORE touchSPI.begin() which reconfigures the shared VSPI peripheral
@@ -9845,13 +9877,14 @@ void setup() {
   WiFi.setSleep(false); delay(200);
 
   loadConfig();
+  applyDisplayConfig();
 
   // Sprite — after WiFi
   Display::init();
   tft.fillScreen(colorBG());
   Display::showBootSplash();
   touchSPI.begin(TOUCH_CLK_PIN,TOUCH_MISO_PIN,TOUCH_MOSI_PIN,TOUCH_CS_PIN);
-  touch.begin(touchSPI); touch.setRotation(1);
+  touch.begin(touchSPI); touch.setRotation(1); // matches tft rotation=1
 
   // Init subsystems
   SFX::init();
